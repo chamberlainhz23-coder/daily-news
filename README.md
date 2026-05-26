@@ -1,10 +1,10 @@
 # 每日全球重要新闻微信推送系统
 
-每天北京时间 08:00 自动抓取全球重要新闻，筛选后生成中文简报，并推送到企业微信群机器人。企业微信不可用时，可改用 Server酱。
+每天北京时间 08:00 自动抓取全球重要新闻，筛选后生成中文简报，并推送到企业微信群机器人。企业微信不可用时，可改用 Server酱推送到个人微信。
 
 ## 1. 系统目标
 
-目标：每天自动推送不超过 10 条高价值国际新闻。
+目标：每天自动推送 8-12 条高价值国际新闻，并让单条分析深度明显高于普通晨报。
 
 路径：
 
@@ -14,6 +14,8 @@
 4. 对候选新闻去重、评分、排序。
 5. 调用 OpenAI 或兼容接口生成中文分析简报。
 6. 优先推送企业微信；没有企业微信时推送 Server酱。
+7. 支持通过 OpenAI 兼容接口接入 DeepSeek 等模型。
+8. 默认提高候选新闻量和输出深度，保证内容至少比基础版详细 3 倍。
 
 ## 2. 项目文件
 
@@ -30,12 +32,18 @@ README.md
 系统内置 RSS 源，覆盖国际政治、经济金融、科技、地缘冲突、中国相关国际新闻：
 
 - BBC World
+- BBC Business
 - Reuters
+- Reuters Business / Finance
 - New York Times World
+- New York Times Business
 - Financial Times World
+- Financial Times Technology
 - Al Jazeera
 - NPR World
+- NPR Business
 - South China Morning Post
+- South China Morning Post China / Business
 - China Daily World / Business
 - Ars Technica Technology
 
@@ -53,7 +61,9 @@ https://www.aljazeera.com/xml/rss/all.xml
 - 不要加入娱乐、社会奇闻、体育类 RSS。
 - 新闻源不宜过多，10-20 个足够。过多会增加重复新闻和模型成本。
 
-## 4. 如何配置 OpenAI API Key
+## 4. 如何配置模型接口
+
+### 方案 A：OpenAI 官方接口
 
 到 OpenAI 平台创建 API Key，然后在 GitHub 仓库中配置 Secret：
 
@@ -63,11 +73,21 @@ OPENAI_MODEL=gpt-4.1-mini
 OPENAI_BASE_URL=https://api.openai.com/v1
 ```
 
+### 方案 B：DeepSeek 或其他兼容 OpenAI 接口
+
 如果你使用兼容 OpenAI Chat Completions 的模型服务，修改：
 
 ```text
 OPENAI_BASE_URL=https://你的服务地址/v1
 OPENAI_MODEL=你的模型名
+```
+
+DeepSeek 推荐配置：
+
+```text
+OPENAI_API_KEY=你的 DeepSeek API Key
+OPENAI_BASE_URL=https://api.deepseek.com
+OPENAI_MODEL=deepseek-v4-flash
 ```
 
 注意：不要把 API Key 写进代码，也不要提交 `.env` 文件。
@@ -131,10 +151,13 @@ SERVERCHAN_SENDKEY
 建议配置：
 
 ```text
-OPENAI_MODEL=gpt-4.1-mini
-OPENAI_BASE_URL=https://api.openai.com/v1
-MAX_NEWS_ITEMS=10
-MAX_CANDIDATES=30
+OPENAI_MODEL=deepseek-v4-flash
+OPENAI_BASE_URL=https://api.deepseek.com
+MAX_NEWS_ITEMS=12
+MAX_CANDIDATES=80
+MAX_PER_FEED=20
+LLM_MAX_TOKENS=4200
+BRIEFING_DETAIL_LEVEL=deep
 ```
 
 可选配置：
@@ -161,7 +184,7 @@ copy .env.example .env
 
 ```text
 OPENAI_API_KEY=你的 Key
-WECOM_WEBHOOK=你的企业微信 Webhook
+SERVERCHAN_SENDKEY=你的 SendKey
 DRY_RUN=true
 ```
 
@@ -282,7 +305,37 @@ GitHub Actions 使用 UTC 时间。北京时间 = UTC + 8。
 2. 用 `workflow_dispatch` 手动运行一次确认流程正常。
 3. 如果仓库长期无活动，GitHub 可能暂停定时任务，需要手动启用。
 
-## 12. 如何调整新闻偏好
+## 12. 如何调整内容长度和深度
+
+你现在可以直接通过 GitHub Secrets 调整输出强度，不需要改代码：
+
+```text
+MAX_NEWS_ITEMS=12
+MAX_CANDIDATES=80
+MAX_PER_FEED=20
+LLM_MAX_TOKENS=4200
+BRIEFING_DETAIL_LEVEL=deep
+```
+
+建议含义：
+
+- `MAX_NEWS_ITEMS`：最终输出条数
+- `MAX_CANDIDATES`：进入模型筛选的候选新闻总数
+- `MAX_PER_FEED`：每个 RSS 最多抓取多少条
+- `LLM_MAX_TOKENS`：模型最大输出长度
+- `BRIEFING_DETAIL_LEVEL`：`deep` 表示深度版
+
+如果你觉得内容仍然偏短，可以先这样改：
+
+```text
+MAX_NEWS_ITEMS=15
+MAX_CANDIDATES=100
+MAX_PER_FEED=25
+LLM_MAX_TOKENS=5200
+BRIEFING_DETAIL_LEVEL=deep
+```
+
+## 13. 如何调整新闻偏好
 
 修改 `main.py`：
 
@@ -300,29 +353,29 @@ FOCUS_KEYWORDS = {
 
 不要把关键词写得太泛，例如 `people`、`new`、`report`，会引入大量低价值新闻。
 
-## 13. 结果判断
+## 14. 结果判断
 
 短期动作：
 
-- 先用内置 RSS 源跑通。
-- 先用 `DRY_RUN=true` 检查内容。
-- 再打开真实推送。
+- 先保证模型接口有余额。
+- 先用默认深度版参数跑通。
+- 观察推送长度是否满足需求，再调 `MAX_NEWS_ITEMS` 和 `LLM_MAX_TOKENS`。
 
 长期动作：
 
 - 每两周检查一次新闻源质量。
 - 删除重复率高、标题党多、低价值新闻多的 RSS。
-- 根据推送结果调整关键词和模型。
+- 根据推送结果调整关键词、候选量和模型输出长度。
 
 最优方案：
 
-- 企业微信群机器人 + OpenAI API + GitHub Actions。
-- 成本低、维护简单、适合新手。
+- Server酱 + DeepSeek + GitHub Actions。
+- 成本更可控，更适合个人微信接收。
 
 备选方案：
 
-- Server酱替代企业微信。
-- 第三方兼容 OpenAI 接口替代 OpenAI 官方接口。
+- 企业微信机器人替代 Server酱。
+- OpenAI 官方接口替代 DeepSeek。
 
 风险：
 
