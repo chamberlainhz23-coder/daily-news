@@ -4,7 +4,7 @@
 
 ## 1. 系统目标
 
-目标：每天自动推送 8-12 条高价值国际新闻，并让单条分析深度明显高于普通晨报。
+目标：每天自动推送 20 条左右高价值国际新闻，形式是短简报，不是长篇分析。
 
 路径：
 
@@ -15,7 +15,7 @@
 5. 调用 OpenAI 或兼容接口生成中文分析简报。
 6. 优先推送企业微信；没有企业微信时推送 Server酱。
 7. 支持通过 OpenAI 兼容接口接入 DeepSeek 等模型。
-8. 默认提高候选新闻量和输出深度，保证内容至少比基础版详细 3 倍。
+8. 默认提高候选新闻量，尽量稳定输出 20 条短简报。
 
 ## 2. 项目文件
 
@@ -153,11 +153,11 @@ SERVERCHAN_SENDKEY
 ```text
 OPENAI_MODEL=deepseek-v4-flash
 OPENAI_BASE_URL=https://api.deepseek.com
-MAX_NEWS_ITEMS=12
-MAX_CANDIDATES=80
-MAX_PER_FEED=20
-LLM_MAX_TOKENS=4200
-BRIEFING_DETAIL_LEVEL=deep
+MAX_NEWS_ITEMS=20
+MAX_CANDIDATES=140
+MAX_PER_FEED=30
+LLM_MAX_TOKENS=5200
+BRIEFING_DETAIL_LEVEL=brief
 ```
 
 可选配置：
@@ -310,11 +310,11 @@ GitHub Actions 使用 UTC 时间。北京时间 = UTC + 8。
 你现在可以直接通过 GitHub Secrets 调整输出强度，不需要改代码：
 
 ```text
-MAX_NEWS_ITEMS=12
-MAX_CANDIDATES=80
-MAX_PER_FEED=20
-LLM_MAX_TOKENS=4200
-BRIEFING_DETAIL_LEVEL=deep
+MAX_NEWS_ITEMS=20
+MAX_CANDIDATES=140
+MAX_PER_FEED=30
+LLM_MAX_TOKENS=5200
+BRIEFING_DETAIL_LEVEL=brief
 ```
 
 建议含义：
@@ -323,16 +323,16 @@ BRIEFING_DETAIL_LEVEL=deep
 - `MAX_CANDIDATES`：进入模型筛选的候选新闻总数
 - `MAX_PER_FEED`：每个 RSS 最多抓取多少条
 - `LLM_MAX_TOKENS`：模型最大输出长度
-- `BRIEFING_DETAIL_LEVEL`：`deep` 表示深度版
+- `BRIEFING_DETAIL_LEVEL`：`brief` 表示短简报版
 
-如果你觉得内容仍然偏短，可以先这样改：
+如果你觉得条数还是不够，可以先这样改：
 
 ```text
-MAX_NEWS_ITEMS=15
-MAX_CANDIDATES=100
-MAX_PER_FEED=25
-LLM_MAX_TOKENS=5200
-BRIEFING_DETAIL_LEVEL=deep
+MAX_NEWS_ITEMS=22
+MAX_CANDIDATES=180
+MAX_PER_FEED=35
+LLM_MAX_TOKENS=6200
+BRIEFING_DETAIL_LEVEL=brief
 ```
 
 ## 13. 如何调整新闻偏好
