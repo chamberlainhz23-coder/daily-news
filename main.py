@@ -268,11 +268,11 @@ def call_llm(articles: List[Dict[str, Any]]) -> str:
 
     base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
     model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini").strip() or "gpt-4.1-mini"
-    max_items = env_int("MAX_NEWS_ITEMS", 12)
-    max_tokens = env_int("LLM_MAX_TOKENS", 4200)
-    detail_level = os.getenv("BRIEFING_DETAIL_LEVEL", "deep").strip() or "deep"
+    max_items = env_int("MAX_NEWS_ITEMS", 20)
+    max_tokens = env_int("LLM_MAX_TOKENS", 5200)
+    detail_level = os.getenv("BRIEFING_DETAIL_LEVEL", "brief").strip() or "brief"
 
-    selected = articles[: min(max_items * 5, 80)]
+    selected = articles[: min(max_items * 6, 140)]
     payload_articles = [
         {
             "title": item["title"],
@@ -286,27 +286,43 @@ def call_llm(articles: List[Dict[str, Any]]) -> str:
 
     system_prompt = (
         "你是一名资深国际政经分析师，服务对象是需要快速决策的中文读者。"
-        "你的任务不是泛泛摘要，而是筛出真正重要的国际新闻，并给出简明、硬信息密度高、"
+        "你的任务不是泛泛摘要，而是筛出真正重要的国际新闻，并给出简短、硬信息密度高、"
         "带判断的中文简报。避免空话、套话、鸡汤和无效背景。"
     )
     user_prompt = f"""
 今天日期：{datetime.now().strftime("%Y-%m-%d")}
-内容密度要求：至少比常规晨报详细 3 倍。
+内容形式要求：20 条左右的短简报，不要长篇分析。
 输出要求：
-1. 输出 8 到 {max_items} 条，优先重要性，不要为了凑数塞低价值新闻。
-2. 每条必须包含以下字段，且每个字段都要有实质内容：
+1. 优先输出 20 条；如果高价值新闻明显不足，最少也要输出 15 条。
+2. 每条必须包含以下字段，且保持短、硬、清楚：
    - 标题
-   - 发生了什么：2到4句，讲清事件、主体、动作、时间。
-   - 为什么重要：2到4句，直接讲战略意义、政策意义或市场意义。
-   - 对中国的影响：2到4句，不能只写“值得关注”。
-   - 对全球格局/市场的影响：2到4句。
-   - 后续观察点：列出2到3个变量。
+   - 发生了什么：1到2句
+   - 为什么重要：1到2句
+   - 对中国/全球格局的影响：1到2句
    - 来源链接
-3. 保持中文、专业、直接、克制，不要写“以下是”“总体来看”“可以看出”。
+3. 每条控制在 120 到 220 个中文字符左右。
+4. 保持中文、专业、直接、克制，不要写“以下是”“总体来看”“可以看出”。
+5. 不要写“后续观察点”，不要展开成长文。
+6. 按重要性排序。
+7. 对同一事件的重复报道只保留信息量最高的一条。
+8. 如果某条新闻事实不足，不要强行拔高。
+9. detail_level={detail_level}，默认按短简报版执行。
+
+输出格式严格参考：
+
+1. 标题
+发生了什么：...
+为什么重要：...
+对中国/全球格局的影响：...
+来源链接：...
+
+2. 标题
+发生了什么：...
+为什么重要：...
+对中国/全球格局的影响：...
+来源链接：...
+
 4. 按重要性排序。
-5. 对同一事件的重复报道只保留信息量最高的一条。
-6. 如果某条新闻事实不足，不要强行拔高。
-7. detail_level={detail_level}，默认按深度版执行。
 
 候选新闻 JSON：
 {json.dumps(payload_articles, ensure_ascii=False, indent=2)}
@@ -336,6 +352,23 @@ def split_markdown_message(content: str, limit: int) -> List[str]:
     if len(content) <= limit:
         return [content]
 
+    article_pattern = re.compile(r"(?=^\d+\.\s)", re.MULTILINE)
+    article_blocks = [block.strip() for block in article_pattern.split(content) if block.strip()]
+    if len(article_blocks) > 1:
+        chunks: List[str] = []
+        current = ""
+        for block in article_blocks:
+            candidate = f"{current}\n\n{block}".strip() if current else block
+            if current and len(candidate) > limit:
+                chunks.append(current.strip())
+                current = block
+            else:
+                current = candidate
+        if current:
+            chunks.append(current.strip())
+        if chunks:
+            return chunks
+
     lines = content.splitlines()
     chunks: List[str] = []
     current: List[str] = []
@@ -362,8 +395,11 @@ def push_wecom(content: str) -> bool:
     if not webhook:
         return False
 
-    for idx, chunk in enumerate(split_markdown_message(content, 3600), start=1):
-        payload = {"msgtype": "markdown", "markdown": {"content": chunk}}
+    chunks = split_markdown_message(content, 3600)
+    total = len(chunks)
+    for idx, chunk in enumerate(chunks, start=1):
+        prefix = f"## 每日全球重要新闻（{idx}/{total}）\n\n" if total > 1 else ""
+        payload = {"msgtype": "markdown", "markdown": {"content": f"{prefix}{chunk}"[:3900]}}
         response = requests.post(webhook, json=payload, timeout=20)
         if response.status_code != 200:
             print(f"[ERROR] 企业微信推送失败: HTTP {response.status_code} | 第 {idx} 段 | {response.text}", file=sys.stderr)
@@ -382,15 +418,21 @@ def push_serverchan(content: str) -> bool:
         return False
 
     url = f"https://sctapi.ftqq.com/{send_key}.send"
-    response = requests.post(url, data={"title": "每日全球重要新闻", "desp": content}, timeout=20)
-    if response.status_code != 200:
-        print(f"[ERROR] Server酱推送失败: HTTP {response.status_code} | {response.text}", file=sys.stderr)
-        return False
+    chunks = split_markdown_message(content, 7000)
+    total = len(chunks)
+    for idx, chunk in enumerate(chunks, start=1):
+        title = "每日全球重要新闻"
+        if total > 1:
+            title = f"每日全球重要新闻（{idx}/{total}）"
+        response = requests.post(url, data={"title": title, "desp": chunk}, timeout=20)
+        if response.status_code != 200:
+            print(f"[ERROR] Server酱推送失败: HTTP {response.status_code} | 第 {idx} 段 | {response.text}", file=sys.stderr)
+            return False
 
-    result = response.json()
-    if result.get("code") not in (0, None):
-        print(f"[ERROR] Server酱推送失败: {result}", file=sys.stderr)
-        return False
+        result = response.json()
+        if result.get("code") not in (0, None):
+            print(f"[ERROR] Server酱推送失败: 第 {idx} 段 | {result}", file=sys.stderr)
+            return False
     return True
 
 
@@ -421,8 +463,8 @@ def main() -> None:
     if not feeds:
         raise RuntimeError("没有可用新闻源。请配置 NEWS_FEEDS。")
 
-    max_per_feed = env_int("MAX_PER_FEED", 20)
-    max_candidates = env_int("MAX_CANDIDATES", 80)
+    max_per_feed = env_int("MAX_PER_FEED", 30)
+    max_candidates = env_int("MAX_CANDIDATES", 140)
 
     articles = fetch_news(feeds, max_per_feed=max_per_feed)
     articles = sorted(articles, key=lambda x: x["score"], reverse=True)[:max_candidates]
