@@ -229,15 +229,16 @@ Actions -> Daily Global News -> Run workflow
 当前配置：
 
 ```yaml
-- cron: "0 0 * * *"
+- cron: "7 0 * * *"
 ```
 
 GitHub Actions 使用 UTC 时间。北京时间 = UTC + 8。
+当前刻意避开整点，减少 GitHub Actions 高峰时段的排队延迟。
 
 常用时间：
 
 ```text
-北京时间 08:00 -> cron: "0 0 * * *"
+北京时间 08:07 -> cron: "7 0 * * *"
 北京时间 07:30 -> cron: "30 23 * * *"
 北京时间 09:00 -> cron: "0 1 * * *"
 ```
