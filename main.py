@@ -269,10 +269,11 @@ def call_llm(articles: List[Dict[str, Any]]) -> str:
     base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
     model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini").strip() or "gpt-4.1-mini"
     max_items = env_int("MAX_NEWS_ITEMS", 20)
+    max_candidates = env_int("MAX_CANDIDATES", 140)
     max_tokens = env_int("LLM_MAX_TOKENS", 5200)
     detail_level = os.getenv("BRIEFING_DETAIL_LEVEL", "brief").strip() or "brief"
 
-    selected = articles[: min(max_items * 6, 140)]
+    selected = articles[: min(max_items * 6, max_candidates, len(articles))]
     payload_articles = [
         {
             "title": item["title"],
@@ -340,12 +341,29 @@ def call_llm(articles: List[Dict[str, Any]]) -> str:
         "max_tokens": max_tokens,
     }
 
-    response = requests.post(url, headers=headers, json=data, timeout=90)
+    try:
+        response = requests.post(url, headers=headers, json=data, timeout=90)
+    except requests.RequestException as exc:
+        raise RuntimeError(f"大模型接口请求失败: {exc}") from exc
+
     if response.status_code >= 400:
         raise RuntimeError(f"大模型接口失败: HTTP {response.status_code} | {response.text[:1200]}")
 
-    result = response.json()
-    return result["choices"][0]["message"]["content"].strip()
+    try:
+        result = response.json()
+        content = result["choices"][0]["message"]["content"]
+    except (ValueError, KeyError, IndexError, TypeError) as exc:
+        raise RuntimeError(f"大模型接口返回格式异常: {response.text[:1200]}") from exc
+
+    if isinstance(content, list):
+        content = "".join(
+            item.get("text", "") for item in content if isinstance(item, dict)
+        ).strip()
+
+    if not isinstance(content, str) or not content.strip():
+        raise RuntimeError(f"大模型接口未返回有效内容: {response.text[:1200]}")
+
+    return content.strip()
 
 
 def split_markdown_message(content: str, limit: int) -> List[str]:
@@ -400,14 +418,18 @@ def push_wecom(content: str) -> bool:
     for idx, chunk in enumerate(chunks, start=1):
         prefix = f"## 每日全球重要新闻（{idx}/{total}）\n\n" if total > 1 else ""
         payload = {"msgtype": "markdown", "markdown": {"content": f"{prefix}{chunk}"[:3900]}}
-        response = requests.post(webhook, json=payload, timeout=20)
-        if response.status_code != 200:
-            print(f"[ERROR] 企业微信推送失败: HTTP {response.status_code} | 第 {idx} 段 | {response.text}", file=sys.stderr)
-            return False
+        try:
+            response = requests.post(webhook, json=payload, timeout=20)
+            if response.status_code != 200:
+                print(f"[ERROR] 企业微信推送失败: HTTP {response.status_code} | 第 {idx} 段 | {response.text}", file=sys.stderr)
+                return False
 
-        data = response.json()
-        if data.get("errcode") != 0:
-            print(f"[ERROR] 企业微信推送失败: 第 {idx} 段 | {data}", file=sys.stderr)
+            data = response.json()
+            if data.get("errcode") != 0:
+                print(f"[ERROR] 企业微信推送失败: 第 {idx} 段 | {data}", file=sys.stderr)
+                return False
+        except (requests.RequestException, ValueError) as exc:
+            print(f"[ERROR] 企业微信推送异常: 第 {idx} 段 | {exc}", file=sys.stderr)
             return False
     return True
 
@@ -424,14 +446,18 @@ def push_serverchan(content: str) -> bool:
         title = "每日全球重要新闻"
         if total > 1:
             title = f"每日全球重要新闻（{idx}/{total}）"
-        response = requests.post(url, data={"title": title, "desp": chunk}, timeout=20)
-        if response.status_code != 200:
-            print(f"[ERROR] Server酱推送失败: HTTP {response.status_code} | 第 {idx} 段 | {response.text}", file=sys.stderr)
-            return False
+        try:
+            response = requests.post(url, data={"title": title, "desp": chunk}, timeout=20)
+            if response.status_code != 200:
+                print(f"[ERROR] Server酱推送失败: HTTP {response.status_code} | 第 {idx} 段 | {response.text}", file=sys.stderr)
+                return False
 
-        result = response.json()
-        if result.get("code") not in (0, None):
-            print(f"[ERROR] Server酱推送失败: 第 {idx} 段 | {result}", file=sys.stderr)
+            result = response.json()
+            if result.get("code") not in (0, None):
+                print(f"[ERROR] Server酱推送失败: 第 {idx} 段 | {result}", file=sys.stderr)
+                return False
+        except (requests.RequestException, ValueError) as exc:
+            print(f"[ERROR] Server酱推送异常: 第 {idx} 段 | {exc}", file=sys.stderr)
             return False
     return True
 
